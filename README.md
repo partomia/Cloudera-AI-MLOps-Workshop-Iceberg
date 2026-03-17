@@ -124,56 +124,39 @@ Model saved to credit_risk_model.pkl
 
 ---
 
-### Step 5 — Deploy the Prediction API
+### Step 5 — Start the Prediction API
 
-#### Option A: Run as a CML Application (recommended)
-
-1. In the project, go to **Applications** > **New Application**.
-2. Set the following:
-   - **Name**: Credit Risk API
-   - **Script**: `03_predict.py`
-   - **Kernel**: Python 3
-   - **Resource Profile**: 1 vCPU / 2 GB RAM
-3. Click **Create Application**.
-
-CML assigns a port via the `CDSW_APP_PORT` environment variable and the app is served by **Gunicorn** (2 workers). Once the status turns green, click the application name or the external link icon to get the public HTTPS endpoint URL.
-
-#### Port handling and diagnostics
-
-CML uses two port variables inside an engine:
-
-| Variable | Purpose |
-|---|---|
-| `CDSW_APP_PORT` | Port CML expects the application to listen on |
-| `CDSW_READONLY_PORT` | Port pre-bound by CML infrastructure (read-only viewer) |
-
-In some CML configurations these two variables are assigned the same value, which means the application cannot bind to `CDSW_APP_PORT` because CML already owns it. The script handles this automatically:
-
-1. At startup it prints all relevant port variables to the application logs so you can see exactly what CML has assigned.
-2. It tests whether `CDSW_APP_PORT` is actually free before binding.
-3. If `CDSW_APP_PORT` conflicts with `CDSW_READONLY_PORT` or is already in use, it falls back to the first available port from `5000 → 5001 → 9090 → 9091`.
-
-**Reading the startup diagnostics** — check the application logs for the block:
-```
-=== CML PORT DIAGNOSTICS ===
-  CDSW_APP_PORT      = 8100
-  CDSW_READONLY_PORT = 8100   ← conflict detected
-  CDSW_ENGINE_TYPE   = application
-  Binding on port    : 5000   ← fallback chosen
-============================
-```
-
-> **Known CML port conflict:** In some CML deployments `CDSW_APP_PORT`, `CDSW_READONLY_PORT`, and `CDSW_PUBLIC_PORT` are all assigned the same value (e.g. `8100`). CML pre-binds this port for its own read-only viewer, so the application can never bind to it. The script detects this and falls back to port `5000`. Gunicorn will start successfully, but CML's proxy will still point at `8100` and external traffic won't reach the app.
->
-> **Fix:** Edit the Application in CML (three-dot menu → **Edit**), find the **Port** field (Advanced Settings), change it to `5000`, and click **Update**. CML will now set `CDSW_APP_PORT=5000` in the application container, the conflict check will not trigger, and Gunicorn will bind to `5000` which CML will proxy correctly.
-
-#### Option B: Run interactively in a session
+Run the API server from your **session terminal**:
 
 ```bash
 python 03_predict.py
 ```
 
-The API starts on `http://localhost:5000` using Gunicorn.
+Gunicorn will start on port `5000` and print:
+
+```
+=== CML PORT DIAGNOSTICS ===
+  CDSW_APP_PORT = ...
+  Binding on port: 5000
+============================
+[INFO] Starting gunicorn 25.1.0
+[INFO] Listening at: http://0.0.0.0:5000
+[INFO] Booting worker with pid: ...
+```
+
+Keep this terminal open (the server must stay running for Step 6).
+
+#### CML Application deployment — known port conflict
+
+The CML **Application** feature assigns ports via `CDSW_APP_PORT`. In some CML deployments this is set to the same value as `CDSW_READONLY_PORT` and `CDSW_PUBLIC_PORT` (e.g. all `8100`), a port CML pre-binds for its own infrastructure. The application can never bind to it, and the Application stays stuck on "Starting".
+
+| Variable | Observed value | Meaning |
+|---|---|---|
+| `CDSW_APP_PORT` | `8100` | Port CML expects the app to use |
+| `CDSW_READONLY_PORT` | `8100` | Pre-bound by CML — unavailable |
+| `CDSW_PUBLIC_PORT` | `8100` | External-facing port CML proxies |
+
+The script detects this conflict and falls back to port `5000`, but CML's proxy still points at `8100` so the Application URL won't reach the API. **Resolving this requires a CML admin** to either fix the port assignment or expose the Application on a different port. Until then, use the session-based approach above.
 
 ---
 
