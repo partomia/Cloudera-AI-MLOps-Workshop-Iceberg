@@ -56,12 +56,32 @@ def health():
 
 if __name__ == "__main__":
     import os
-    import subprocess
+    import signal
 
     port = int(os.environ.get("CDSW_APP_PORT", 5000))
 
-    # Free the port if a stale process is holding it
-    subprocess.call(["fuser", "-k", f"{port}/tcp"], stderr=subprocess.DEVNULL)
+    # Free the port if a stale process is holding it (pure Python, no fuser needed)
+    try:
+        hex_port = format(port, '04X')
+        with open('/proc/net/tcp') as f:
+            for line in f.readlines()[1:]:
+                parts = line.strip().split()
+                if parts[1].split(':')[1].upper() == hex_port:
+                    inode = int(parts[9])
+                    for pid in os.listdir('/proc'):
+                        if not pid.isdigit():
+                            continue
+                        try:
+                            for fd in os.listdir(f'/proc/{pid}/fd'):
+                                try:
+                                    if f'socket:[{inode}]' in os.readlink(f'/proc/{pid}/fd/{fd}'):
+                                        os.kill(int(pid), signal.SIGKILL)
+                                except OSError:
+                                    pass
+                        except OSError:
+                            pass
+    except Exception:
+        pass
 
     from gunicorn.app.base import BaseApplication
 
