@@ -62,10 +62,11 @@ if __name__ == "__main__":
     port = int(os.environ.get("CDSW_APP_PORT", 5000))
 
     def _free_port(port):
-        """Kill any process holding the given port, skipping ourselves."""
+        """Kill any process holding the given port, skipping ourselves and our parent."""
         hex_port = format(port, '04X')
         my_pid = os.getpid()
-        my_pgid = os.getpgid(my_pid)
+        my_ppid = os.getppid()
+        safe_pids = {my_pid, my_ppid}
         killed = False
         for tcp_file in ('/proc/net/tcp', '/proc/net/tcp6'):
             try:
@@ -78,20 +79,13 @@ if __name__ == "__main__":
                                 if not pid.isdigit():
                                     continue
                                 pid_int = int(pid)
-                                if pid_int == my_pid:
+                                if pid_int in safe_pids:
                                     continue
                                 try:
                                     for fd in os.listdir(f'/proc/{pid}/fd'):
                                         try:
                                             if f'socket:[{inode}]' in os.readlink(f'/proc/{pid}/fd/{fd}'):
-                                                try:
-                                                    pgid = os.getpgid(pid_int)
-                                                    if pgid != my_pgid:
-                                                        os.killpg(pgid, signal.SIGKILL)
-                                                    else:
-                                                        os.kill(pid_int, signal.SIGKILL)
-                                                except OSError:
-                                                    os.kill(pid_int, signal.SIGKILL)
+                                                os.kill(pid_int, signal.SIGKILL)
                                                 killed = True
                                         except OSError:
                                             pass
