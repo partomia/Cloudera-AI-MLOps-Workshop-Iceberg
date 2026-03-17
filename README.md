@@ -138,7 +138,32 @@ Model saved to credit_risk_model.pkl
 
 CML assigns a port via the `CDSW_APP_PORT` environment variable and the app is served by **Gunicorn** (2 workers). Once the status turns green, click the application name or the external link icon to get the public HTTPS endpoint URL.
 
-> **Troubleshooting — `Address already in use`:** The script automatically finds and kills any stale process holding the port (checks both IPv4 `/proc/net/tcp` and IPv6 `/proc/net/tcp6`, kills the full process group, and waits 2 seconds for the OS to release the port before Gunicorn binds). If the app still fails to start, click the three-dot menu → **Restart** to let the cleanup run again on a fresh attempt.
+#### Port handling and diagnostics
+
+CML uses two port variables inside an engine:
+
+| Variable | Purpose |
+|---|---|
+| `CDSW_APP_PORT` | Port CML expects the application to listen on |
+| `CDSW_READONLY_PORT` | Port pre-bound by CML infrastructure (read-only viewer) |
+
+In some CML configurations these two variables are assigned the same value, which means the application cannot bind to `CDSW_APP_PORT` because CML already owns it. The script handles this automatically:
+
+1. At startup it prints all relevant port variables to the application logs so you can see exactly what CML has assigned.
+2. It tests whether `CDSW_APP_PORT` is actually free before binding.
+3. If `CDSW_APP_PORT` conflicts with `CDSW_READONLY_PORT` or is already in use, it falls back to the first available port from `5000 → 5001 → 9090 → 9091`.
+
+**Reading the startup diagnostics** — check the application logs for the block:
+```
+=== CML PORT DIAGNOSTICS ===
+  CDSW_APP_PORT      = 8100
+  CDSW_READONLY_PORT = 8100   ← conflict detected
+  CDSW_ENGINE_TYPE   = application
+  Binding on port    : 5000   ← fallback chosen
+============================
+```
+
+> **Note:** If the script falls back to a port other than `CDSW_APP_PORT`, CML's reverse proxy will not automatically route external traffic to it. In that case, raise a ticket with your CML admin to investigate the port assignment conflict in the Application engine configuration.
 
 #### Option B: Run interactively in a session
 
