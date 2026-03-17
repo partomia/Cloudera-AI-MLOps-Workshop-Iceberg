@@ -56,7 +56,13 @@ def health():
 
 if __name__ == "__main__":
     import os
+    import subprocess
+
     port = int(os.environ.get("CDSW_APP_PORT", 5000))
+
+    # Free the port if a stale process is holding it
+    subprocess.call(["fuser", "-k", f"{port}/tcp"], stderr=subprocess.DEVNULL)
+
     from gunicorn.app.base import BaseApplication
 
     class StandaloneApp(BaseApplication):
