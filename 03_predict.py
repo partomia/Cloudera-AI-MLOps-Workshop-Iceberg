@@ -57,31 +57,43 @@ def health():
 if __name__ == "__main__":
     import os
     import signal
+    import time
 
     port = int(os.environ.get("CDSW_APP_PORT", 5000))
 
-    # Free the port if a stale process is holding it (pure Python, no fuser needed)
-    try:
+    def _free_port(port):
+        """Kill any process (and its group) holding the given port, then wait for release."""
         hex_port = format(port, '04X')
-        with open('/proc/net/tcp') as f:
-            for line in f.readlines()[1:]:
-                parts = line.strip().split()
-                if parts[1].split(':')[1].upper() == hex_port:
-                    inode = int(parts[9])
-                    for pid in os.listdir('/proc'):
-                        if not pid.isdigit():
-                            continue
-                        try:
-                            for fd in os.listdir(f'/proc/{pid}/fd'):
+        killed = False
+        for tcp_file in ('/proc/net/tcp', '/proc/net/tcp6'):
+            try:
+                with open(tcp_file) as f:
+                    for line in f.readlines()[1:]:
+                        parts = line.strip().split()
+                        if len(parts) > 9 and parts[1].split(':')[1].upper() == hex_port:
+                            inode = int(parts[9])
+                            for pid in os.listdir('/proc'):
+                                if not pid.isdigit():
+                                    continue
                                 try:
-                                    if f'socket:[{inode}]' in os.readlink(f'/proc/{pid}/fd/{fd}'):
-                                        os.kill(int(pid), signal.SIGKILL)
+                                    for fd in os.listdir(f'/proc/{pid}/fd'):
+                                        try:
+                                            if f'socket:[{inode}]' in os.readlink(f'/proc/{pid}/fd/{fd}'):
+                                                try:
+                                                    os.killpg(os.getpgid(int(pid)), signal.SIGKILL)
+                                                except OSError:
+                                                    os.kill(int(pid), signal.SIGKILL)
+                                                killed = True
+                                        except OSError:
+                                            pass
                                 except OSError:
                                     pass
-                        except OSError:
-                            pass
-    except Exception:
-        pass
+            except Exception:
+                pass
+        if killed:
+            time.sleep(2)  # Allow OS to fully release the port
+
+    _free_port(port)
 
     from gunicorn.app.base import BaseApplication
 

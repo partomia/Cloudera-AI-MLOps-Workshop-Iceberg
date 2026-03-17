@@ -138,7 +138,7 @@ Model saved to credit_risk_model.pkl
 
 CML assigns a port via the `CDSW_APP_PORT` environment variable and the app is served by **Gunicorn** (2 workers). Once the status turns green, click the application name or the external link icon to get the public HTTPS endpoint URL.
 
-> **Troubleshooting:** If the application stays on "Starting" or shows `Address already in use`, click the three-dot menu → **Restart**. This clears any stale port binding from a previous crashed instance.
+> **Troubleshooting — `Address already in use`:** The script automatically finds and kills any stale process holding the port (checks both IPv4 `/proc/net/tcp` and IPv6 `/proc/net/tcp6`, kills the full process group, and waits 2 seconds for the OS to release the port before Gunicorn binds). If the app still fails to start, click the three-dot menu → **Restart** to let the cleanup run again on a fresh attempt.
 
 #### Option B: Run interactively in a session
 
