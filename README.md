@@ -36,7 +36,7 @@ Ravi-ML/
 ├── cdsw-build.sh          # CML/CDSW environment bootstrap script
 ├── 01_generate_data.py    # Generate synthetic loan dataset (loan_data.csv)
 ├── 02_train_model.py      # Train XGBoost model, evaluate, save model artifacts
-├── 03_predict.py          # Flask REST API serving predictions
+├── 03_predict.py          # Flask/Gunicorn REST API serving predictions
 └── 04_test_api.py         # Test the running API with sample requests
 ```
 
@@ -79,7 +79,7 @@ CML will clone the repo. The `cdsw-build.sh` script is used to build a custom en
    ```bash
    pip install -r requirements.txt
    ```
-   This installs xgboost, flask, joblib, and other dependencies not included in the CML base image.
+   This installs xgboost, flask, joblib, gunicorn, and other dependencies not included in the CML base image.
 
 > **Note:** If your admin has configured a custom engine image using `cdsw-build.sh`, packages will already be pre-installed and you can skip step 4.
 
@@ -136,7 +136,9 @@ Model saved to credit_risk_model.pkl
    - **Resource Profile**: 1 vCPU / 2 GB RAM
 3. Click **Create Application**.
 
-CML will start the Flask app and provide a public HTTPS endpoint URL.
+CML assigns a port via the `CDSW_APP_PORT` environment variable and the app is served by **Gunicorn** (2 workers). Once the status turns green, click the application name or the external link icon to get the public HTTPS endpoint URL.
+
+> **Troubleshooting:** If the application stays on "Starting" or shows `Address already in use`, click the three-dot menu → **Restart**. This clears any stale port binding from a previous crashed instance.
 
 #### Option B: Run interactively in a session
 
@@ -144,7 +146,7 @@ CML will start the Flask app and provide a public HTTPS endpoint URL.
 python 03_predict.py
 ```
 
-The API starts on `http://localhost:5000`.
+The API starts on `http://localhost:5000` using Gunicorn.
 
 ---
 
@@ -208,11 +210,12 @@ Returns `{"status": "ok"}` when the API is running.
 
 ## Dependencies
 
-| Package | Version | Purpose |
-|---|---|---|
-| pandas | 2.1.0 | Data manipulation |
-| numpy | 1.24.3 | Numerical operations |
-| scikit-learn | 1.3.0 | Preprocessing, metrics |
-| xgboost | 1.7.6 | Gradient boosted classifier |
-| flask | 3.0.0 | REST API server |
-| joblib | 1.3.2 | Model serialization |
+| Package | Purpose |
+|---|---|
+| pandas | Data manipulation |
+| numpy | Numerical operations |
+| scikit-learn | Preprocessing, metrics |
+| xgboost | Gradient boosted classifier |
+| flask | REST API framework |
+| joblib | Model serialization |
+| gunicorn | Production WSGI server for CML Applications |
