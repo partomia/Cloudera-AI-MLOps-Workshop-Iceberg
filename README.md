@@ -63,11 +63,11 @@ Ravi-ML/
    ```
 5. Set the project name (e.g., `credit-risk-model`) and click **Create Project**.
 
-CML will clone the repo and automatically run `cdsw-build.sh` to install all dependencies listed in `requirements.txt`.
+CML will clone the repo. The `cdsw-build.sh` script is used to build a custom engine image — it does **not** run automatically inside a session.
 
 ---
 
-### Step 2 — Open a Session (AI Workbench)
+### Step 2 — Open a Session and Install Dependencies
 
 1. Inside the project, click **New Session**.
 2. Select the following settings:
@@ -75,6 +75,13 @@ CML will clone the repo and automatically run `cdsw-build.sh` to install all dep
    - **Kernel**: Python 3
    - **Resource Profile**: At least 2 vCPU / 4 GB RAM
 3. Click **Start Session**.
+4. Once the session is ready, open the **Terminal** tab and run:
+   ```bash
+   pip install -r requirements.txt
+   ```
+   This installs xgboost, flask, joblib, and other dependencies not included in the CML base image.
+
+> **Note:** If your admin has configured a custom engine image using `cdsw-build.sh`, packages will already be pre-installed and you can skip step 4.
 
 ---
 
