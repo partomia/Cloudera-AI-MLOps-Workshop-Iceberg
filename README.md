@@ -163,7 +163,9 @@ In some CML configurations these two variables are assigned the same value, whic
 ============================
 ```
 
-> **Note:** If the script falls back to a port other than `CDSW_APP_PORT`, CML's reverse proxy will not automatically route external traffic to it. In that case, raise a ticket with your CML admin to investigate the port assignment conflict in the Application engine configuration.
+> **Known CML port conflict:** In some CML deployments `CDSW_APP_PORT`, `CDSW_READONLY_PORT`, and `CDSW_PUBLIC_PORT` are all assigned the same value (e.g. `8100`). CML pre-binds this port for its own read-only viewer, so the application can never bind to it. The script detects this and falls back to port `5000`. Gunicorn will start successfully, but CML's proxy will still point at `8100` and external traffic won't reach the app.
+>
+> **Fix:** Edit the Application in CML (three-dot menu → **Edit**), find the **Port** field (Advanced Settings), change it to `5000`, and click **Update**. CML will now set `CDSW_APP_PORT=5000` in the application container, the conflict check will not trigger, and Gunicorn will bind to `5000` which CML will proxy correctly.
 
 #### Option B: Run interactively in a session
 
