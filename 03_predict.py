@@ -56,47 +56,40 @@ def health():
 
 if __name__ == "__main__":
     import os
-    import signal
+    import socket
     import time
 
-    port = int(os.environ.get("CDSW_APP_PORT", 5000))
+    # --- Diagnostics (visible in Application logs) ---
+    print("=== CML PORT DIAGNOSTICS ===")
+    for var in ("CDSW_APP_PORT", "CDSW_READONLY_PORT", "CDSW_ENGINE_TYPE", "CDSW_PUBLIC_PORT"):
+        print(f"  {var} = {os.environ.get(var, 'NOT SET')}")
 
-    def _free_port(port):
-        """Kill any process holding the given port, skipping ourselves and our parent."""
-        hex_port = format(port, '04X')
-        my_pid = os.getpid()
-        my_ppid = os.getppid()
-        safe_pids = {my_pid, my_ppid}
-        killed = False
-        for tcp_file in ('/proc/net/tcp', '/proc/net/tcp6'):
+    def _port_free(port):
+        """Return True if we can bind to the port."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
-                with open(tcp_file) as f:
-                    for line in f.readlines()[1:]:
-                        parts = line.strip().split()
-                        if len(parts) > 9 and parts[1].split(':')[1].upper() == hex_port:
-                            inode = int(parts[9])
-                            for pid in os.listdir('/proc'):
-                                if not pid.isdigit():
-                                    continue
-                                pid_int = int(pid)
-                                if pid_int in safe_pids:
-                                    continue
-                                try:
-                                    for fd in os.listdir(f'/proc/{pid}/fd'):
-                                        try:
-                                            if f'socket:[{inode}]' in os.readlink(f'/proc/{pid}/fd/{fd}'):
-                                                os.kill(pid_int, signal.SIGKILL)
-                                                killed = True
-                                        except OSError:
-                                            pass
-                                except OSError:
-                                    pass
-            except Exception:
-                pass
-        if killed:
-            time.sleep(2)  # Allow OS to fully release the port
+                s.bind(("0.0.0.0", port))
+                return True
+            except OSError:
+                return False
 
-    _free_port(port)
+    # Use CDSW_APP_PORT unless it's already taken by CML infrastructure,
+    # in which case fall back to the next available port.
+    readonly_port = int(os.environ.get("CDSW_READONLY_PORT", 0))
+    requested_port = int(os.environ.get("CDSW_APP_PORT", 5000))
+
+    if requested_port == readonly_port or not _port_free(requested_port):
+        print(f"  WARNING: port {requested_port} in use or conflicts with CDSW_READONLY_PORT")
+        # Try common fallback ports
+        for candidate in (5000, 5001, 9090, 9091):
+            if _port_free(candidate):
+                requested_port = candidate
+                break
+
+    port = requested_port
+    print(f"  Binding on port: {port}")
+    print("============================")
 
     from gunicorn.app.base import BaseApplication
 
