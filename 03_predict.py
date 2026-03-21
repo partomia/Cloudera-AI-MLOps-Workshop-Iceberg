@@ -17,6 +17,12 @@ except FileNotFoundError as e:
         "Run 01_generate_data.py then 02_train_model.py first."
     ) from e
 
+# Disable XGBoost's internal thread pool.
+# Gunicorn forks workers after the model is loaded; XGBoost's OpenMP thread
+# pool does not survive a fork and can deadlock on the first predict call.
+# For single-row inference there is no performance cost to nthread=1.
+model.set_params(nthread=1)
+
 FEATURE_ORDER = [
     "loan_amount",
     "annual_income",
@@ -49,7 +55,7 @@ def predict():
             payload[f] if f != "loan_purpose" else loan_purpose_encoded
             for f in FEATURE_ORDER
         ]
-        prob = model.predict_proba(np.array([values]))[0][1]
+        prob = model.predict_proba(np.array([values], dtype=np.float64))[0][1]
         prediction = int(prob >= 0.5)
         return jsonify({
             "default_probability": round(float(prob), 4),

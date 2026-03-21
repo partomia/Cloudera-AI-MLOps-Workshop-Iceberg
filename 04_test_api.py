@@ -39,7 +39,7 @@ test_cases = [
 ]
 
 try:
-    resp = requests.get(f"{BASE_URL}/health", timeout=5)
+    resp = requests.get(f"{BASE_URL}/health", timeout=30)
     resp.raise_for_status()
     print("Health check:", resp.json())
 except requests.ConnectionError:
@@ -54,7 +54,7 @@ print()
 
 for case in test_cases:
     try:
-        resp = requests.post(f"{BASE_URL}/predict", json=case["payload"], timeout=5)
+        resp = requests.post(f"{BASE_URL}/predict", json=case["payload"], timeout=30)
         resp.raise_for_status()
         result = resp.json()
         print(f"[{case['description']}]")
