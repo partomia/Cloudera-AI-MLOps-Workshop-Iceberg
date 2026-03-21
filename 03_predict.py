@@ -8,8 +8,14 @@ from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-model = joblib.load("credit_risk_model.pkl")
-le = joblib.load("label_encoder.pkl")
+try:
+    model = joblib.load("credit_risk_model.pkl")
+    le = joblib.load("label_encoder.pkl")
+except FileNotFoundError as e:
+    raise SystemExit(
+        f"ERROR: Model artifact not found ({e}). "
+        "Run 01_generate_data.py then 02_train_model.py first."
+    ) from e
 
 FEATURE_ORDER = [
     "loan_amount",
@@ -26,19 +32,24 @@ FEATURE_ORDER = [
 @app.route("/predict", methods=["POST"])
 def predict():
     payload = request.get_json()
+    if not payload:
+        return jsonify({"error": "Request body must be JSON"}), 400
+
+    missing = [f for f in FEATURE_ORDER if f not in payload]
+    if missing:
+        return jsonify({"error": f"Missing required fields: {missing}"}), 400
+
     try:
         loan_purpose_encoded = le.transform([payload["loan_purpose"]])[0]
-        features = np.array([[
-            payload["loan_amount"],
-            payload["annual_income"],
-            payload["credit_score"],
-            payload["employment_years"],
-            payload["debt_to_income"],
-            payload["num_credit_lines"],
-            payload["num_delinquencies"],
-            loan_purpose_encoded,
-        ]])
-        prob = model.predict_proba(features)[0][1]
+    except ValueError:
+        return jsonify({"error": f"Invalid loan_purpose. Valid values: {list(le.classes_)}"}), 400
+
+    try:
+        values = [
+            payload[f] if f != "loan_purpose" else loan_purpose_encoded
+            for f in FEATURE_ORDER
+        ]
+        prob = model.predict_proba(np.array([values]))[0][1]
         prediction = int(prob >= 0.5)
         return jsonify({
             "default_probability": round(float(prob), 4),
@@ -57,7 +68,6 @@ def health():
 if __name__ == "__main__":
     import os
     import socket
-    import time
 
     # --- Diagnostics (visible in Application logs) ---
     print("=== CML PORT DIAGNOSTICS ===")

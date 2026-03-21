@@ -42,6 +42,26 @@ Ravi-ML/
 
 ---
 
+## MLflow Experiment Tracking
+
+This project uses **MLflow** to log model parameters, KPIs, and artifacts. In Cloudera AI the `MLFLOW_TRACKING_URI` environment variable is automatically set in every session — no configuration needed. When running locally, runs are stored in `./mlruns`.
+
+Each training run (`02_train_model.py`) records:
+
+| What is logged | MLflow key |
+|---|---|
+| Hyperparameters | `n_estimators`, `max_depth`, `learning_rate`, `eval_metric` |
+| Dataset stats | `train_samples`, `test_samples`, `default_rate` |
+| **KPI / success metrics** | `roc_auc`, `accuracy` |
+| Default class metrics | `precision_default`, `recall_default`, `f1_default` |
+| No-default class metrics | `precision_no_default`, `recall_no_default`, `f1_no_default` |
+| Model artifact | XGBoost model (with signature + input example) |
+| Encoder artifact | `label_encoder.pkl` |
+
+**To view experiment results in CML:** navigate to **Experiments** in the left sidebar of your project. Each run appears with all logged metrics, making it easy to compare hyperparameter sweeps or track model improvement over time.
+
+---
+
 ## Using This Project in Cloudera AI (CML) — AI Workbench
 
 ### Prerequisites
