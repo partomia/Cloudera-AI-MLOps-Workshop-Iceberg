@@ -12,16 +12,37 @@ in the project filesystem before deployment.  Run 01_generate_data.py then
 CML loads this module once at startup, so joblib.load() runs only on boot.
 """
 
+import os
+import warnings
 import joblib
 import numpy as np
 
-# Loaded once at deployment startup — not on every request
-model = joblib.load("credit_risk_model.pkl")
-le = joblib.load("label_encoder.pkl")
+# Absolute path to the project directory — works regardless of the working
+# directory CML uses when it boots the model container.
+_PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Disable XGBoost's OpenMP thread pool — avoids fork-safety issues
-# inside CML's managed serving workers (same fix as the Gunicorn path).
-model.set_params(nthread=1)
+# Set OMP_NUM_THREADS before importing XGBoost so the OpenMP thread pool
+# is never initialised in a way that survives a fork incorrectly.
+# This is the same deadlock fix as the Gunicorn path, applied at OS level.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+# Suppress XGBoost FutureWarnings (deprecated pandas APIs in XGBoost 1.7.x)
+# that flood deployment logs without indicating real errors.
+warnings.filterwarnings("ignore", category=FutureWarning, module="xgboost")
+
+try:
+    model = joblib.load(os.path.join(_PROJECT_DIR, "credit_risk_model.pkl"))
+    le    = joblib.load(os.path.join(_PROJECT_DIR, "label_encoder.pkl"))
+    model.set_params(nthread=1)
+    print(f"Model loaded from {_PROJECT_DIR}")
+except FileNotFoundError as exc:
+    # Raise RuntimeError so CML surfaces the message in the deployment logs
+    # rather than silently crashing with an unhandled SystemExit.
+    raise RuntimeError(
+        f"Model artifact not found: {exc}. "
+        f"Run 01_generate_data.py then 02_train_model.py before deploying "
+        f"(looked in: {_PROJECT_DIR})"
+    ) from exc
 
 FEATURE_ORDER = [
     "loan_amount",
