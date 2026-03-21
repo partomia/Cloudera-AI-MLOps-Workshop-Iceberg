@@ -36,9 +36,17 @@ Ravi-ML/
 ├── cdsw-build.sh          # CML/CDSW environment bootstrap script
 ├── 01_generate_data.py    # Generate synthetic loan dataset (loan_data.csv)
 ├── 02_train_model.py      # Train XGBoost model, evaluate, save model artifacts
-├── 03_predict.py          # Flask/Gunicorn REST API serving predictions
-└── 04_test_api.py         # Test the running API with sample requests
+├── 03_predict.py          # Flask/Gunicorn REST API — session-based serving
+├── 04_test_api.py         # Test the running Flask API with sample requests
+└── cml_model.py           # CML Model Deployment entry point (production path)
 ```
+
+There are two serving paths:
+
+| Path | File | When to use |
+|---|---|---|
+| **Session API** | `03_predict.py` | Development, quick testing in a session terminal |
+| **Model Deployment** | `cml_model.py` | Production — managed endpoint, auth, auto-scaling |
 
 ---
 
@@ -238,6 +246,144 @@ Returns `{"status": "ok"}` when the API is running.
 
 ---
 
+## CML Model Deployment (Production Path)
+
+This is the recommended production path. CML Model Deployments give you a managed, authenticated REST endpoint that runs 24/7 without needing an open session.
+
+### How it differs from the Session API
+
+| | Session API (`03_predict.py`) | Model Deployment (`cml_model.py`) |
+|---|---|---|
+| Lifecycle | Lives only while your session is open | Runs independently, always-on |
+| Auth | None (open within session) | Access key required on every request |
+| Scaling | Single process | Configurable replicas |
+| Entry point | Flask route `POST /predict` | Plain Python function `predict(args)` |
+| Port management | Manual (Gunicorn + port detection) | Handled entirely by CML |
+
+---
+
+### Step A — Create CML Jobs for the Pipeline
+
+Rather than running scripts manually in a session terminal, create Jobs so the pipeline can be re-run on demand or on a schedule.
+
+1. In your project, go to **Jobs** → **New Job**
+
+2. **Job 1 — Generate Data**
+   - Name: `Generate Loan Data`
+   - Script: `01_generate_data.py`
+   - Kernel: Python 3
+   - Schedule: Manual
+
+3. **Job 2 — Train Model**
+   - Name: `Train Credit Risk Model`
+   - Script: `02_train_model.py`
+   - Kernel: Python 3
+   - Schedule: Manual
+   - _(Optional)_ Set **Job 1** as a dependency so training always uses fresh data
+
+4. Run **Job 1** then **Job 2** in order. This produces `credit_risk_model.pkl` and `label_encoder.pkl` in the project filesystem and logs the run to the **Experiments** tab.
+
+> The `.pkl` files must exist in the project before deploying the model. Re-run the training job whenever you retrain.
+
+---
+
+### Step B — Deploy the Model
+
+1. Go to **Models** → **New Model**
+
+2. Fill in the configuration:
+
+   | Field | Value |
+   |---|---|
+   | Name | `credit-risk-model` |
+   | Description | XGBoost loan default predictor |
+   | File | `cml_model.py` |
+   | Function | `predict` |
+   | Kernel | Python 3 |
+   | CPU | 1 |
+   | Memory | 2 GB |
+   | Replicas | 1 |
+
+3. Under **Example Input**, paste this so you can test from the UI:
+   ```json
+   {
+     "loan_amount": 10000,
+     "annual_income": 90000,
+     "credit_score": 780,
+     "employment_years": 10,
+     "debt_to_income": 0.15,
+     "num_credit_lines": 5,
+     "num_delinquencies": 0,
+     "loan_purpose": "home"
+   }
+   ```
+
+4. Click **Deploy Model**. CML will build the environment and start the model. Wait for the status badge to turn **green (Running)** — this typically takes 2–5 minutes.
+
+---
+
+### Step C — Test the Deployed Model
+
+#### From the CML UI
+
+Open the deployed model → click **Test** tab → the example input is pre-filled → click **Run**.
+
+Expected response:
+```json
+{
+  "default_probability": 0.0312,
+  "prediction": 0,
+  "risk_label": "LOW"
+}
+```
+
+#### Via curl
+
+Find the **Access Key** on the model's overview page, then:
+
+```bash
+curl -X POST https://<your-cml-workspace>/api/v1/projects/<username>/<project-name>/models/<model-id>/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "accessKey": "<your-model-access-key>",
+    "request": {
+      "loan_amount": 10000,
+      "annual_income": 90000,
+      "credit_score": 780,
+      "employment_years": 10,
+      "debt_to_income": 0.15,
+      "num_credit_lines": 5,
+      "num_delinquencies": 0,
+      "loan_purpose": "home"
+    }
+  }'
+```
+
+Response structure:
+```json
+{
+  "success": true,
+  "response": {
+    "default_probability": 0.0312,
+    "prediction": 0,
+    "risk_label": "LOW"
+  }
+}
+```
+
+> **Note:** CML wraps your function's return value inside `"response"`. The `"success"` field indicates whether CML was able to call your function (not whether the loan is approved).
+
+---
+
+### Retraining and Redeployment
+
+To update the model after retraining:
+
+1. Re-run **Job 2** (Train Credit Risk Model) — new `.pkl` files are written and a new MLflow run is logged
+2. Go to the deployed model → **Builds** → **Rebuild** — CML picks up the new `.pkl` files and redeploys with zero downtime
+
+---
+
 ## Dependencies
 
 | Package | Purpose |
@@ -246,6 +392,8 @@ Returns `{"status": "ok"}` when the API is running.
 | numpy | Numerical operations |
 | scikit-learn | Preprocessing, metrics |
 | xgboost | Gradient boosted classifier |
-| flask | REST API framework |
+| flask | REST API framework (session path only) |
 | joblib | Model serialization |
-| gunicorn | Production WSGI server for CML Applications |
+| gunicorn | WSGI server for session-based serving |
+| requests | HTTP client for test script |
+| mlflow | Experiment tracking (pre-installed by CML via mlflow-cml-plugin — do not add to requirements.txt) |
