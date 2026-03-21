@@ -34,7 +34,7 @@ try:
     model = joblib.load(os.path.join(_PROJECT_DIR, "credit_risk_model.pkl"))
     le    = joblib.load(os.path.join(_PROJECT_DIR, "label_encoder.pkl"))
     model.set_params(nthread=1)
-    print(f"Model loaded from {_PROJECT_DIR}")
+    print(f"Model loaded from {_PROJECT_DIR}", flush=True)
 except FileNotFoundError as exc:
     # Raise RuntimeError so CML surfaces the message in the deployment logs
     # rather than silently crashing with an unhandled SystemExit.
