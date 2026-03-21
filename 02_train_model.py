@@ -79,11 +79,12 @@ with mlflow.start_run():
     })
 
     # --- Log model artifact with signature and input example ---
+    # Use artifact_path (compatible with mlflow-skinny 2.x used by CML's mlflow-cml-plugin)
     input_example = X_test.iloc[:5]
     signature = mlflow.models.infer_signature(X_test, y_prob)
     mlflow.xgboost.log_model(
         model,
-        name="model",
+        artifact_path="model",
         input_example=input_example,
         signature=signature,
     )

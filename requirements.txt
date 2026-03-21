@@ -6,4 +6,5 @@ flask
 joblib
 gunicorn
 requests
-mlflow
+# mlflow is pre-installed in Cloudera AI via mlflow-cml-plugin.
+# Do NOT add mlflow here — installing a newer version breaks the CML plugin.
