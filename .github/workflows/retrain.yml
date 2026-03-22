@@ -1,8 +1,8 @@
 name: Retrain & Validate Model
 
 # Triggers:
-#   - Every push to main (automatic retraining on code changes)
-#   - Manual trigger from the Actions tab (for on-demand runs)
+#   - Every push to main
+#   - Manual trigger from the Actions tab
 on:
   push:
     branches: [main]
@@ -10,7 +10,7 @@ on:
 
 jobs:
   retrain:
-    name: Run CML training pipeline
+    name: Train and validate model
     runs-on: ubuntu-latest
 
     steps:
@@ -22,12 +22,14 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install pipeline dependencies
-        run: pip install requests
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
-      - name: Run CML pipeline (generate → train → validate)
-        env:
-          CML_WORKSPACE_URL: ${{ secrets.CML_WORKSPACE_URL }}
-          CML_API_KEY:       ${{ secrets.CML_API_KEY }}
-          CML_PROJECT_ID:    ${{ secrets.CML_PROJECT_ID }}
-        run: python cml_pipeline.py
+      - name: Generate loan data
+        run: python 01_generate_data.py
+
+      - name: Train model
+        run: python 02_train_model.py
+
+      - name: Validate model KPIs
+        run: python 05_validate_model.py
