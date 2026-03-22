@@ -73,4 +73,3 @@ if failures:
     sys.exit(1)
 
 print("VALIDATION PASSED — model meets all KPI thresholds.")
-sys.exit(0)
