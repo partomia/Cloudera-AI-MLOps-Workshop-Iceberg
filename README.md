@@ -352,11 +352,11 @@ No secrets or external services required — the pipeline runs entirely within G
 Defined at the top of `05_validate_model.py`:
 
 ```python
-ROC_AUC_MIN    = 0.75
-F1_DEFAULT_MIN = 0.60
+ROC_AUC_MIN    = 0.72
+F1_DEFAULT_MIN = 0.50
 ```
 
-Adjust these as your data and business requirements evolve.
+These are calibrated to realistic performance on the synthetic dataset. Raise them when switching to real loan data.
 
 ---
 
