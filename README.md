@@ -1,6 +1,6 @@
 # Credit Risk Model — Loan Default Prediction
 
-A end-to-end machine learning project that predicts the probability of a borrower defaulting on a loan. Built with XGBoost and served as a REST API via Flask, designed to run on **Cloudera AI (CML) / AI Workbench**.
+An end-to-end machine learning project that predicts the probability of a borrower defaulting on a loan. Built with XGBoost and served as a REST API via Flask, designed to run on **Cloudera AI (CML) / AI Workbench**.
 
 ---
 
@@ -10,8 +10,9 @@ Credit risk scoring is a core use case in financial services. This project demon
 
 - Synthetic loan dataset generation with realistic risk factors
 - Binary classification model training (default vs. no default) using XGBoost
+- MLflow experiment tracking integrated with CML's native Experiments UI
 - Model serialization and deployment as a REST API
-- API validation with sample low-risk and high-risk applicants
+- Automated CI/CD pipeline with KPI validation gates on every push
 
 ### Features used for prediction
 
@@ -32,24 +33,16 @@ Credit risk scoring is a core use case in financial services. This project demon
 
 ```
 Ravi-ML/
-├── requirements.txt                      # Python dependencies
-├── cdsw-build.sh                         # CML/CDSW environment bootstrap script
-├── 01_generate_data.py                   # Generate synthetic loan dataset (loan_data.csv)
-├── 02_train_model.py                     # Train XGBoost model, evaluate, save model artifacts
-├── 03_predict.py                         # Flask/Gunicorn REST API — session-based serving
-├── 04_test_api.py                        # Test the running Flask API with sample requests
-├── 05_validate_model.py                  # KPI validation gate (CML Job 3, CI/CD pipeline)
-├── cml_model.py                          # CML Model Deployment entry point (production path)
-├── cml_pipeline.py                       # GitHub Actions → CML API orchestrator
-└── .github/workflows/retrain.yml         # GitHub Actions workflow definition
+├── requirements.txt                  # Python dependencies
+├── cdsw-build.sh                     # CML/CDSW environment bootstrap script
+├── 01_generate_data.py               # Generate synthetic loan dataset (loan_data.csv)
+├── 02_train_model.py                 # Train XGBoost model, log to MLflow, save artifacts
+├── 03_predict.py                     # Flask/Gunicorn REST API — session-based serving
+├── 04_test_api.py                    # Test the running Flask API with sample requests
+├── 05_validate_model.py              # KPI validation gate — used by CI/CD pipeline
+├── cml_model.py                      # CML Model Deployment entry point (production path)
+└── .github/workflows/retrain.yml     # GitHub Actions CI/CD workflow
 ```
-
-There are two serving paths:
-
-| Path | File | When to use |
-|---|---|---|
-| **Session API** | `03_predict.py` | Development, quick testing in a session terminal |
-| **Model Deployment** | `cml_model.py` | Production — managed endpoint, auth, auto-scaling |
 
 ---
 
@@ -69,11 +62,13 @@ Each training run (`02_train_model.py`) records:
 | Model artifact | XGBoost model (with signature + input example) |
 | Encoder artifact | `label_encoder.pkl` |
 
-**To view experiment results in CML:** navigate to **Experiments** in the left sidebar of your project. Each run appears with all logged metrics, making it easy to compare hyperparameter sweeps or track model improvement over time.
+> MLflow is pre-installed in CML sessions via `mlflow-cml-plugin`. It is intentionally excluded from `requirements.txt` to avoid breaking CML's pinned version. When running outside CML (e.g. GitHub Actions), MLflow is skipped automatically.
+
+**To view experiment results in CML:** navigate to **Experiments** in the left sidebar of your project.
 
 ---
 
-## Using This Project in Cloudera AI (CML) — AI Workbench
+## Using This Project in Cloudera AI (CML)
 
 ### Prerequisites
 
@@ -92,39 +87,32 @@ Each training run (`02_train_model.py`) records:
    ```
    https://github.com/partomia/Ravi-ML
    ```
-5. Set the project name (e.g., `credit-risk-model`) and click **Create Project**.
-
-CML will clone the repo. The `cdsw-build.sh` script is used to build a custom engine image — it does **not** run automatically inside a session.
+5. Set the project name and click **Create Project**.
 
 ---
 
 ### Step 2 — Open a Session and Install Dependencies
 
 1. Inside the project, click **New Session**.
-2. Select the following settings:
+2. Select:
    - **Editor**: Workbench (or JupyterLab)
    - **Kernel**: Python 3
    - **Resource Profile**: At least 2 vCPU / 4 GB RAM
 3. Click **Start Session**.
-4. Once the session is ready, open the **Terminal** tab and run:
+4. In the **Terminal** tab, run:
    ```bash
    pip install -r requirements.txt
    ```
-   This installs xgboost, flask, joblib, gunicorn, and other dependencies not included in the CML base image.
-
-> **Note:** If your admin has configured a custom engine image using `cdsw-build.sh`, packages will already be pre-installed and you can skip step 4.
 
 ---
 
 ### Step 3 — Generate the Dataset
 
-Open a terminal or run the script directly in the session:
-
 ```bash
 python 01_generate_data.py
 ```
 
-This generates `loan_data.csv` (10,000 synthetic loan records) in the project directory.
+Generates `loan_data.csv` (10,000 synthetic loan records).
 
 Expected output:
 ```
@@ -139,7 +127,7 @@ Dataset generated: 10000 rows, default rate: 28.34%
 python 02_train_model.py
 ```
 
-This reads `loan_data.csv`, trains an XGBoost classifier, prints evaluation metrics, and saves:
+Trains an XGBoost classifier, logs the run to MLflow, and saves:
 - `credit_risk_model.pkl` — trained model
 - `label_encoder.pkl` — encoder for `loan_purpose`
 
@@ -150,6 +138,7 @@ Expected output:
            1       0.xx      0.xx      0.xx      xxxx
 
 ROC-AUC: 0.xxxx
+MLflow run logged  — run_id: ...
 Model saved to credit_risk_model.pkl
 ```
 
@@ -163,37 +152,19 @@ Run the API server from your **session terminal**:
 python 03_predict.py
 ```
 
-Gunicorn will start on port `5000` and print:
+Gunicorn will start on port `5000`:
 
 ```
-=== CML PORT DIAGNOSTICS ===
-  CDSW_APP_PORT = ...
-  Binding on port: 5000
-============================
 [INFO] Starting gunicorn 25.1.0
 [INFO] Listening at: http://0.0.0.0:5000
 [INFO] Booting worker with pid: ...
 ```
 
-Keep this terminal open (the server must stay running for Step 6).
-
-#### CML Application deployment — known port conflict
-
-The CML **Application** feature assigns ports via `CDSW_APP_PORT`. In some CML deployments this is set to the same value as `CDSW_READONLY_PORT` and `CDSW_PUBLIC_PORT` (e.g. all `8100`), a port CML pre-binds for its own infrastructure. The application can never bind to it, and the Application stays stuck on "Starting".
-
-| Variable | Observed value | Meaning |
-|---|---|---|
-| `CDSW_APP_PORT` | `8100` | Port CML expects the app to use |
-| `CDSW_READONLY_PORT` | `8100` | Pre-bound by CML — unavailable |
-| `CDSW_PUBLIC_PORT` | `8100` | External-facing port CML proxies |
-
-The script detects this conflict and falls back to port `5000`, but CML's proxy still points at `8100` so the Application URL won't reach the API. **Resolving this requires a CML admin** to either fix the port assignment or expose the Application on a different port. Until then, use the session-based approach above.
+Keep this terminal open — the server must stay running for Step 6.
 
 ---
 
 ### Step 6 — Test the API
-
-Update `BASE_URL` in `04_test_api.py` if using the CML Application endpoint (Option A above), then run:
 
 ```bash
 python 04_test_api.py
@@ -251,9 +222,9 @@ Returns `{"status": "ok"}` when the API is running.
 
 ## CML Model Deployment (Production Path)
 
-This is the recommended production path. CML Model Deployments give you a managed, authenticated REST endpoint that runs 24/7 without needing an open session.
+CML Model Deployments provide a managed, authenticated REST endpoint that runs 24/7 without needing an open session.
 
-### How it differs from the Session API
+### Session API vs Model Deployment
 
 | | Session API (`03_predict.py`) | Model Deployment (`cml_model.py`) |
 |---|---|---|
@@ -261,39 +232,25 @@ This is the recommended production path. CML Model Deployments give you a manage
 | Auth | None (open within session) | Access key required on every request |
 | Scaling | Single process | Configurable replicas |
 | Entry point | Flask route `POST /predict` | Plain Python function `predict(args)` |
-| Port management | Manual (Gunicorn + port detection) | Handled entirely by CML |
-
----
+| Port management | Manual (Gunicorn) | Handled entirely by CML |
 
 ### Step A — Create CML Jobs for the Pipeline
 
-Rather than running scripts manually in a session terminal, create Jobs so the pipeline can be re-run on demand or on a schedule.
+In CML → **Jobs → New Job**, create each job:
 
-1. In your project, go to **Jobs** → **New Job**
+| Job name | Script | Dependency |
+|---|---|---|
+| `Generate Loan Data` | `01_generate_data.py` | — |
+| `Train Credit Risk Model` | `02_train_model.py` | Generate Loan Data |
+| `Validate Model KPIs` | `05_validate_model.py` | Train Credit Risk Model |
 
-2. **Job 1 — Generate Data**
-   - Name: `Generate Loan Data`
-   - Script: `01_generate_data.py`
-   - Kernel: Python 3
-   - Schedule: Manual
+Run **Job 1** then **Job 2** in order. This produces `credit_risk_model.pkl` and `label_encoder.pkl` in the project filesystem and logs the run to the **Experiments** tab.
 
-3. **Job 2 — Train Model**
-   - Name: `Train Credit Risk Model`
-   - Script: `02_train_model.py`
-   - Kernel: Python 3
-   - Schedule: Manual
-   - _(Optional)_ Set **Job 1** as a dependency so training always uses fresh data
-
-4. Run **Job 1** then **Job 2** in order. This produces `credit_risk_model.pkl` and `label_encoder.pkl` in the project filesystem and logs the run to the **Experiments** tab.
-
-> The `.pkl` files must exist in the project before deploying the model. Re-run the training job whenever you retrain.
-
----
+> The `.pkl` files must exist in the project before deploying the model.
 
 ### Step B — Deploy the Model
 
 1. Go to **Models** → **New Model**
-
 2. Fill in the configuration:
 
    | Field | Value |
@@ -307,7 +264,7 @@ Rather than running scripts manually in a session terminal, create Jobs so the p
    | Memory | 2 GB |
    | Replicas | 1 |
 
-3. Under **Example Input**, paste this so you can test from the UI:
+3. Under **Example Input**, paste:
    ```json
    {
      "loan_amount": 10000,
@@ -320,32 +277,18 @@ Rather than running scripts manually in a session terminal, create Jobs so the p
      "loan_purpose": "home"
    }
    ```
-
-4. Click **Deploy Model**. CML will build the environment and start the model. Wait for the status badge to turn **green (Running)** — this typically takes 2–5 minutes.
-
----
+4. Click **Deploy Model** and wait for the status badge to turn **green (Running)**.
 
 ### Step C — Test the Deployed Model
 
 #### From the CML UI
 
-Open the deployed model → click **Test** tab → the example input is pre-filled → click **Run**.
-
-Expected response:
-```json
-{
-  "default_probability": 0.0312,
-  "prediction": 0,
-  "risk_label": "LOW"
-}
-```
+Model → **Test** tab → example input is pre-filled → click **Run**.
 
 #### Via curl
 
-Find the **Access Key** on the model's overview page, then:
-
 ```bash
-curl -X POST https://<your-cml-workspace>/api/v1/projects/<username>/<project-name>/models/<model-id>/predict \
+curl -X POST https://<your-cml-workspace>/api/v1/projects/<username>/<project>/models/<model-id>/predict \
   -H "Content-Type: application/json" \
   -d '{
     "accessKey": "<your-model-access-key>",
@@ -362,7 +305,7 @@ curl -X POST https://<your-cml-workspace>/api/v1/projects/<username>/<project-na
   }'
 ```
 
-Response structure:
+Response:
 ```json
 {
   "success": true,
@@ -374,93 +317,46 @@ Response structure:
 }
 ```
 
-> **Note:** CML wraps your function's return value inside `"response"`. The `"success"` field indicates whether CML was able to call your function (not whether the loan is approved).
-
----
-
 ### Retraining and Redeployment
 
-To update the model after retraining:
-
 1. Re-run **Job 2** (Train Credit Risk Model) — new `.pkl` files are written and a new MLflow run is logged
-2. Go to the deployed model → **Builds** → **Rebuild** — CML picks up the new `.pkl` files and redeploys with zero downtime
+2. Deployed model → **Builds** → **Rebuild** — CML picks up the new `.pkl` files and redeploys with zero downtime
 
 ---
 
-## CI/CD Pipeline (GitHub Actions → CML)
+## CI/CD Pipeline (GitHub Actions)
 
-Every push to `main` automatically triggers a full retraining and validation pipeline via GitHub Actions.
+Every push to `main` automatically retrains and validates the model.
 
 ```
 Push to main
      ↓
 GitHub Actions fires (.github/workflows/retrain.yml)
      ↓
-cml_pipeline.py calls CML REST API
+Step 1: pip install -r requirements.txt
      ↓
-Job 1: Generate Loan Data        (01_generate_data.py)
+Step 2: python 01_generate_data.py   → loan_data.csv
      ↓
-Job 2: Train Credit Risk Model   (02_train_model.py)
+Step 3: python 02_train_model.py     → credit_risk_model.pkl
      ↓
-Job 3: Validate Model KPIs       (05_validate_model.py)
+Step 4: python 05_validate_model.py
      ↓
 ✅ ROC-AUC ≥ 0.75 AND F1 ≥ 0.60 → pipeline green
-❌ Either threshold missed        → pipeline red, merge blocked
+❌ Either threshold missed        → pipeline red
 ```
 
-### One-time setup
-
-#### 1 — Create the three CML Jobs
-
-In CML → **Jobs → New Job**, create each job in order:
-
-| Job name (exact) | Script | Dependency |
-|---|---|---|
-| `Generate Loan Data` | `01_generate_data.py` | — |
-| `Train Credit Risk Model` | `02_train_model.py` | Generate Loan Data |
-| `Validate Model KPIs` | `05_validate_model.py` | Train Credit Risk Model |
-
-> The job names must match exactly — `cml_pipeline.py` looks them up by name.
-
-#### 2 — Get your CML API key
-
-CML → top-right user menu → **Profile** → **API Keys** → **Create API Key**. Copy it immediately (shown once).
-
-#### 3 — Get your Project ID
-
-Open your CML project. The numeric ID is in the URL:
-```
-https://<workspace>/projects/1234/...
-                              ^^^^
-                          PROJECT_ID
-```
-
-Or: CML → Project → **Settings** → **Project ID** field.
-
-#### 4 — Add GitHub Secrets
-
-In your GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**:
-
-| Secret name | Value |
-|---|---|
-| `CML_WORKSPACE_URL` | `https://ml-xxxx.go01-dem.ylcu-atmi.cloudera.site` |
-| `CML_API_KEY` | Your CML API key |
-| `CML_PROJECT_ID` | Numeric project ID (e.g. `6742`) |
-
-#### 5 — Push to main
-
-The workflow fires automatically. Monitor it under **Actions** in your GitHub repo.
+No secrets or external services required — the pipeline runs entirely within GitHub Actions.
 
 ### KPI thresholds
 
-Thresholds are defined at the top of `05_validate_model.py`:
+Defined at the top of `05_validate_model.py`:
 
 ```python
 ROC_AUC_MIN    = 0.75
 F1_DEFAULT_MIN = 0.60
 ```
 
-Adjust these to tighten or relax the gate as your data and business requirements evolve.
+Adjust these as your data and business requirements evolve.
 
 ---
 
@@ -468,12 +364,12 @@ Adjust these to tighten or relax the gate as your data and business requirements
 
 | Package | Purpose |
 |---|---|
-| pandas | Data manipulation |
-| numpy | Numerical operations |
-| scikit-learn | Preprocessing, metrics |
-| xgboost | Gradient boosted classifier |
-| flask | REST API framework (session path only) |
-| joblib | Model serialization |
-| gunicorn | WSGI server for session-based serving |
-| requests | HTTP client for test script |
-| mlflow | Experiment tracking (pre-installed by CML via mlflow-cml-plugin — do not add to requirements.txt) |
+| `pandas` | Data manipulation |
+| `numpy<2.0` | Numerical operations (pinned for scikit-learn 1.3.0 compatibility) |
+| `scikit-learn==1.3.0` | Preprocessing, metrics |
+| `xgboost==1.7.6` | Gradient boosted classifier |
+| `flask` | REST API framework (session path only) |
+| `joblib==1.3.2` | Model serialization |
+| `gunicorn` | WSGI server for session-based serving |
+| `requests` | HTTP client for test script |
+| `mlflow` | Experiment tracking — pre-installed by CML via `mlflow-cml-plugin`, do not add to `requirements.txt` |
