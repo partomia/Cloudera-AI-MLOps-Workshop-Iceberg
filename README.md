@@ -32,13 +32,16 @@ Credit risk scoring is a core use case in financial services. This project demon
 
 ```
 Ravi-ML/
-├── requirements.txt       # Python dependencies
-├── cdsw-build.sh          # CML/CDSW environment bootstrap script
-├── 01_generate_data.py    # Generate synthetic loan dataset (loan_data.csv)
-├── 02_train_model.py      # Train XGBoost model, evaluate, save model artifacts
-├── 03_predict.py          # Flask/Gunicorn REST API — session-based serving
-├── 04_test_api.py         # Test the running Flask API with sample requests
-└── cml_model.py           # CML Model Deployment entry point (production path)
+├── requirements.txt                      # Python dependencies
+├── cdsw-build.sh                         # CML/CDSW environment bootstrap script
+├── 01_generate_data.py                   # Generate synthetic loan dataset (loan_data.csv)
+├── 02_train_model.py                     # Train XGBoost model, evaluate, save model artifacts
+├── 03_predict.py                         # Flask/Gunicorn REST API — session-based serving
+├── 04_test_api.py                        # Test the running Flask API with sample requests
+├── 05_validate_model.py                  # KPI validation gate (CML Job 3, CI/CD pipeline)
+├── cml_model.py                          # CML Model Deployment entry point (production path)
+├── cml_pipeline.py                       # GitHub Actions → CML API orchestrator
+└── .github/workflows/retrain.yml         # GitHub Actions workflow definition
 ```
 
 There are two serving paths:
@@ -381,6 +384,83 @@ To update the model after retraining:
 
 1. Re-run **Job 2** (Train Credit Risk Model) — new `.pkl` files are written and a new MLflow run is logged
 2. Go to the deployed model → **Builds** → **Rebuild** — CML picks up the new `.pkl` files and redeploys with zero downtime
+
+---
+
+## CI/CD Pipeline (GitHub Actions → CML)
+
+Every push to `main` automatically triggers a full retraining and validation pipeline via GitHub Actions.
+
+```
+Push to main
+     ↓
+GitHub Actions fires (.github/workflows/retrain.yml)
+     ↓
+cml_pipeline.py calls CML REST API
+     ↓
+Job 1: Generate Loan Data        (01_generate_data.py)
+     ↓
+Job 2: Train Credit Risk Model   (02_train_model.py)
+     ↓
+Job 3: Validate Model KPIs       (05_validate_model.py)
+     ↓
+✅ ROC-AUC ≥ 0.75 AND F1 ≥ 0.60 → pipeline green
+❌ Either threshold missed        → pipeline red, merge blocked
+```
+
+### One-time setup
+
+#### 1 — Create the three CML Jobs
+
+In CML → **Jobs → New Job**, create each job in order:
+
+| Job name (exact) | Script | Dependency |
+|---|---|---|
+| `Generate Loan Data` | `01_generate_data.py` | — |
+| `Train Credit Risk Model` | `02_train_model.py` | Generate Loan Data |
+| `Validate Model KPIs` | `05_validate_model.py` | Train Credit Risk Model |
+
+> The job names must match exactly — `cml_pipeline.py` looks them up by name.
+
+#### 2 — Get your CML API key
+
+CML → top-right user menu → **Profile** → **API Keys** → **Create API Key**. Copy it immediately (shown once).
+
+#### 3 — Get your Project ID
+
+Open your CML project. The numeric ID is in the URL:
+```
+https://<workspace>/projects/1234/...
+                              ^^^^
+                          PROJECT_ID
+```
+
+Or: CML → Project → **Settings** → **Project ID** field.
+
+#### 4 — Add GitHub Secrets
+
+In your GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**:
+
+| Secret name | Value |
+|---|---|
+| `CML_WORKSPACE_URL` | `https://ml-xxxx.go01-dem.ylcu-atmi.cloudera.site` |
+| `CML_API_KEY` | Your CML API key |
+| `CML_PROJECT_ID` | Numeric project ID (e.g. `6742`) |
+
+#### 5 — Push to main
+
+The workflow fires automatically. Monitor it under **Actions** in your GitHub repo.
+
+### KPI thresholds
+
+Thresholds are defined at the top of `05_validate_model.py`:
+
+```python
+ROC_AUC_MIN    = 0.75
+F1_DEFAULT_MIN = 0.60
+```
+
+Adjust these to tighten or relax the gate as your data and business requirements evolve.
 
 ---
 
