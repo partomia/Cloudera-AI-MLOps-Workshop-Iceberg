@@ -44,6 +44,8 @@ Ravi-ML/
 └── .github/workflows/retrain.yml     # GitHub Actions CI/CD workflow
 ```
 
+<img width="735" height="367" alt="image" src="https://github.com/user-attachments/assets/d54f39f4-3ac7-4492-bea1-27eab6ee25e1" />
+
 ---
 
 ## MLflow Experiment Tracking
