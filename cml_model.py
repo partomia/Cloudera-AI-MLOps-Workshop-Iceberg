@@ -17,9 +17,14 @@ import warnings
 import joblib
 import numpy as np
 
-# Absolute path to the project directory — works regardless of the working
-# directory CML uses when it boots the model container.
-_PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Absolute path to the project directory.
+# __file__ is not defined when CML executes this code inside a Jupyter kernel
+# (it sends the source as a string, not a module import), so fall back to
+# the CDSW_PROJECT_ROOT environment variable that CML always sets.
+try:
+    _PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    _PROJECT_DIR = os.environ.get("CDSW_PROJECT_ROOT", "/home/cdsw")
 
 # Set OMP_NUM_THREADS before importing XGBoost so the OpenMP thread pool
 # is never initialised in a way that survives a fork incorrectly.
