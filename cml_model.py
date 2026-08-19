@@ -13,11 +13,15 @@ with the Jobs pipeline:
 
 CML imports this module once at startup, so joblib.load runs only on boot.
 """
-
 import os
-import warnings
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+
 import json
+import warnings
 import joblib
+
 
 from features import DECISION_THRESHOLD, FEATURE_ORDER, build_feature_vector
 
@@ -30,7 +34,6 @@ except NameError:
 
 # Set before XGBoost initialises its OpenMP pool — the pool does not survive
 # a fork and can deadlock on the first predict call.
-os.environ.setdefault("OMP_NUM_THREADS", "1")
 warnings.filterwarnings("ignore", category=FutureWarning, module="xgboost")
 
 try:
