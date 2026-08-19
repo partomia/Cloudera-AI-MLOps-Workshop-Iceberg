@@ -49,21 +49,16 @@ except FileNotFoundError as exc:
 
 
 def predict(args):
-    """
-    CML Model Deployment handler — called for every POST to /predict.
-    `args` is the `request` field of the JSON body CML receives.
+    print(f"ARGS TYPE: {type(args)}", flush=True)
+    print(f"ARGS KEYS: {list(args.keys()) if isinstance(args, dict) else 'NOT A DICT'}", flush=True)
 
-    Bureau fields may be null for new-to-credit borrowers. The key must be
-    present; its value may be null. That is a valid application, not a
-    malformed request.
-    """
     vector, error = build_feature_vector(args, encoders)
     if error:
+        print(f"VALIDATION ERROR: {error}", flush=True)
         return {"error": error}
 
     prob = float(model.predict_proba(vector)[0][1])
     prediction = int(prob >= DECISION_THRESHOLD)
-
     return {
         "default_probability": round(prob, 4),
         "prediction": prediction,
