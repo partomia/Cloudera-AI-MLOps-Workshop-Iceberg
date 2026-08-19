@@ -15,3 +15,5 @@ set -e
 #   Job 3  05_validate_model.py  -> KPI gate
 
 pip install -r requirements.txt
+
+python 02_train_model.py
