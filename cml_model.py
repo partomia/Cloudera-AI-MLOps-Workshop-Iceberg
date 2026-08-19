@@ -16,7 +16,7 @@ CML imports this module once at startup, so joblib.load runs only on boot.
 
 import os
 import warnings
-
+import json
 import joblib
 
 from features import DECISION_THRESHOLD, FEATURE_ORDER, build_feature_vector
@@ -47,18 +47,35 @@ except FileNotFoundError as exc:
         f"deploying (looked in: {_PROJECT_DIR})"
     ) from exc
 
-
 def predict(args):
-    print(f"ARGS TYPE: {type(args)}", flush=True)
-    print(f"ARGS KEYS: {list(args.keys()) if isinstance(args, dict) else 'NOT A DICT'}", flush=True)
+    """
+    CML Model Deployment handler — called for every POST to the endpoint.
+
+    The PBJ runtime passes the request as a JSON string, while the classic
+    CDSW runtime passes a parsed dict. Handle both so this file works on
+    either. Some versions also hand over the whole body rather than just
+    the `request` field, so unwrap that too.
+    """
+    if isinstance(args, (str, bytes)):
+        try:
+            args = json.loads(args)
+        except (ValueError, TypeError) as exc:
+            return {"error": f"Request body is not valid JSON: {exc}"}
+
+    if not isinstance(args, dict):
+        return {"error": f"Expected a JSON object, got {type(args).__name__}"}
+
+    # Unwrap if the full envelope arrived instead of just the request field.
+    if "request" in args and isinstance(args["request"], dict):
+        args = args["request"]
 
     vector, error = build_feature_vector(args, encoders)
     if error:
-        print(f"VALIDATION ERROR: {error}", flush=True)
         return {"error": error}
 
     prob = float(model.predict_proba(vector)[0][1])
     prediction = int(prob >= DECISION_THRESHOLD)
+
     return {
         "default_probability": round(prob, 4),
         "prediction": prediction,
