@@ -32,6 +32,76 @@ Excluded on purpose (per the comment in `features.py`): `loan_id`/`customer_id` 
 
 ---
 
+## Key Findings
+
+The point of this project isn't the API — it's what training on real (if synthetic-origin) loan data exposes about credit risk modelling. Everything below is either reproduced directly from `02_train_model.py`/`05_validate_model.py` against the `loan_data.csv` committed to this repo, or reproduced independently as noted; the one exception (the 8-feature intermediate run) is sourced from workshop history and isn't reproducible from code currently in the repo, since only the final 21-feature version is checked in.
+
+### 1. 96% accurate, zero defaults caught
+
+`02_train_model.py` trains with `scale_pos_weight` to correct for the 4.22% default rate. Strip that one parameter out — same data, same 21 features, same split — and you get this:
+
+```
+              precision    recall  f1-score   support
+
+           0       0.96      1.00      0.98      3379
+           1       0.00      0.00      0.00       149
+
+    accuracy                           0.96      3528
+
+ROC-AUC: 0.7512   Gini: 0.5024
+```
+
+The unbalanced model predicts "will not default" for every one of the 3,528 holdout loans. It gets 3,379 right and all 149 defaults wrong, and accuracy calls that 96% — a lender using this model approves everyone.
+
+The twist: ROC-AUC is still 0.75, Gini still ~0.50. The model isn't stupid — it ranks borrowers just as well as the balanced version below. It just can't express that ranking as a decision, because at a 4.22% base rate almost nothing crosses a 0.5 threshold. **Ranking and classification are different capabilities; accuracy measures only the second and says nothing about the first.**
+
+### 2. Balancing moves the boundary, not the ranking
+
+|                    | Baseline (no `scale_pos_weight`) | Balanced (`02_train_model.py` as committed) |
+|---|---|---|
+| Accuracy           | 0.96 | 0.72 |
+| Recall on defaults | 0.00 | 0.60 |
+| Gini               | 0.5024 | 0.4959 |
+
+Both rows above are real runs against the same data. Accuracy *falls* 24 points and the model becomes useful — it now catches 89 of 149 defaults. Anyone optimizing for accuracy alone would reject this change. Gini barely moves: balancing shifted the decision boundary, not the model's underlying ability to rank borrowers. If someone claims class balancing improved their model's discrimination, the AUC/Gini before and after is the number that tells you if that's true.
+
+### 3. The portfolio metric hides a quarter of the book
+
+From the real `05_validate_model.py` segment breakdown:
+
+| Segment | n | Default rate | Gini |
+|---|---|---|---|
+| Bureau-backed | 2,630 | 3.12% | 0.5056 |
+| New-to-credit | 898 | 7.46% | 0.3426 |
+
+Portfolio Gini (0.4959) clears the 0.35 gate comfortably. On new-to-credit borrowers — 25% of the book here, and default at 2.4x the bureau-backed rate — it's 0.3426, close to the floor. A single model with a single cut-off systematically misprices this segment while the portfolio-level number looks fine. (`05_validate_model.py` already reports this as a non-blocking warning — see [KPI thresholds](#kpi-thresholds).)
+
+### The closing moment: three real applicants
+
+Same three payloads verified live in [Step 6](#step-6--test-the-api):
+
+| Applicant | Probability | Actually defaulted |
+|---|---|---|
+| Low risk, bureau-backed | 0.0030 | No |
+| High risk, prior default | 0.9379 | Yes |
+| New-to-credit, no bureau file | 0.9420 | Yes |
+
+The third applicant has six null fields — no credit score, no delinquency count, no utilisation, no credit history. A traditional bureau-based scorecard cannot score this application at all. This model returns 0.942 — a confident, correct decline — driven by `prior_loan_count`, `prior_default_count`, and `prior_principal_sum`: the borrower's behaviour on the lender's own book. None of those three columns exist in any bureau feed; they're engineered from the lender's own loan history. That's the case for this kind of feature pipeline: not that it moves data around, but that it creates information a bureau pull cannot give you.
+
+### Other things worth knowing
+
+- **No Spark needed.** `01_load_gold.py` reads the Iceberg table through a CML Impala data connection straight into a pandas DataFrame — no Spark session, no metastore config, no keytab handling in this code.
+- **Nulls are informative, not missing data.** 26,694 nulls = 4,449 thin-file (new-to-credit) borrowers × 6 bureau columns, confirmed by direct check against `loan_data.csv` — every `is_ntc == 1` row has all six bureau fields null, and every other row has none. They're left as `NaN` on purpose; XGBoost splits on missingness natively.
+- **`is_ntc` scores zero feature importance** (confirmed in the actual training run above) even though new-to-credit borrowers default at 2.4x the rate. Both are true at once: `credit_score`'s nullness is a perfect proxy for `is_ntc` (verified — 0 mismatches across all 17,636 rows), so the missingness split already separates these borrowers without needing the explicit flag. The signal is real; the feature is redundant. This is only visible because the bureau nulls weren't imputed away.
+- **Gini and KS as gates, not accuracy/F1** — threshold-independent, which matters because the decision threshold (`DECISION_THRESHOLD` in `features.py`) is a business call that can change without retraining. An F1 gate on the default class would fail the balanced model above and pass the baseline.
+- **Widening 8 → 21 features barely moved the needle** (per workshop history: Gini 0.4988 with 8 features → 0.4959 with 21, on a run not present in this repo). Not a curated success story — but the segment finding above only exists because the wider feature set (including `is_ntc` and the prior-loan behavioural features) is there to find it with.
+
+### The deliberate failure
+
+The 96%-accuracy baseline above isn't a bug — it's the model you get by default if you skip one line of class-imbalance handling on a low-default-rate portfolio. Nothing crashes, the pipeline runs cleanly end-to-end, and the resulting model is genuinely 96% accurate and would approve every applicant who walked in.
+
+---
+
 ## Repository Structure
 
 ```
