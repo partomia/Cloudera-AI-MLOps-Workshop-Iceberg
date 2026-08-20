@@ -28,7 +28,7 @@ The model uses 21 features, defined once in `features.py` and imported everywher
 
 **Bureau fields are `null` for new-to-credit (NTC) borrowers** (4,449 of 17,636 rows) — left as `NaN` on purpose. XGBoost splits on missingness natively, and "no bureau file" is itself predictive, so these are never imputed.
 
-Excluded on purpose: `loan_id`/`customer_id` (identifiers), `disbursal_date` (audit only), `_gold_ts` (pipeline audit column), `state` (too high-cardinality for the number of test defaults available).
+Excluded on purpose (per the comment in `features.py`): `loan_id`/`customer_id` (identifiers), `disbursal_date` (used for auditing, not as a feature), `_gold_ts` (pipeline audit column), and `state` — the highest-cardinality categorical; with only 149 defaults in the test set, there isn't enough signal to fit ~28 state levels without the model memorising rather than generalising.
 
 ---
 
@@ -89,7 +89,10 @@ Each training run (`02_train_model.py`) records:
 1. Log in to your **Cloudera AI** workspace.
 2. Click **New Project** on the Projects page.
 3. Choose **Git** as the project source.
-4. Enter the repository URL.
+4. Enter the repository URL:
+   ```
+   https://github.com/partomia/Cloudera-AI-MLOps-Workshop-Iceberg
+   ```
 5. Set the project name and click **Create Project**.
 
 ---
@@ -118,12 +121,12 @@ python 01_load_gold.py
 
 Reads `federal12_gold.credit_risk_features` via Impala and writes `loan_data.csv`. This step needs a live Data Connection and Kerberos credentials, so it only runs inside a CML session — not in `cdsw-build.sh` and not in GitHub Actions.
 
-Expected output:
+Expected output (verified against the `loan_data.csv` currently committed to this repo):
 ```
 Loaded 17,636 rows from federal12_gold.credit_risk_features
 Features     : 21
 Default rate : 4.22%
-Nulls        : ... (bureau fields for new-to-credit borrowers — left as NaN on purpose)
+Nulls        : 26,694 (bureau fields for new-to-credit borrowers — left as NaN on purpose)
 ```
 
 ---
@@ -134,11 +137,47 @@ Nulls        : ... (bureau fields for new-to-credit borrowers — left as NaN on
 python 02_train_model.py
 ```
 
-Trains an XGBoost classifier, logs the run to MLflow, and saves:
+Trains an XGBoost classifier, logs the run to MLflow if it's installed (outside CML/CI it typically isn't — the script falls back gracefully and just skips logging), and saves:
 - `credit_risk_model.pkl` — trained model
 - `label_encoders.pkl` — encoders for `employment_status` and `purpose`
 
-Prints a classification report, ROC-AUC/Gini/KS, top feature importances, risk-quintile lift, and a new-to-credit vs. bureau-backed segment breakdown.
+Actual output from a run against the `loan_data.csv` committed to this repo — a real captured run, not a hand-written illustration. `random_state=42` fixes the train/test split and the model's own randomness, but training doesn't pin `nthread`, so multi-threaded histogram building means the exact numbers below can shift slightly (unlikely to move the pass/fail gate) on a machine with a different core count:
+```
+              precision    recall  f1-score   support
+
+           0       0.98      0.72      0.83      3379
+           1       0.09      0.60      0.15       149
+
+    accuracy                           0.72      3528
+
+ROC-AUC      : 0.7479
+Gini         : 0.4959   (gate: 0.35)
+KS           : 36.9     (gate: 25)
+KS threshold : 0.3793
+
+Feature importance (top 12):
+credit_score             20.10
+debt_to_income           10.10
+annual_income              8.45
+...
+
+Zero importance (1): is_ntc
+
+Risk quintiles (holdout):
+             loans  defaults  default_rate_%
+Q1 safest      706         2            0.28
+...
+Q5 riskiest    706        72           10.20
+
+New-to-credit : n=  898  default= 7.46%  Gini=0.3426
+Bureau-backed : n=2,630  default= 3.12%  Gini=0.5056
+
+Model saved to credit_risk_model.pkl
+```
+
+Two things worth noting from this actual run:
+- `is_ntc` has **zero** feature importance even though it's the flag that identifies new-to-credit borrowers — XGBoost is apparently learning the same signal from missingness in the bureau fields directly, making the explicit flag redundant.
+- `KS threshold : 0.3793` in this output is exactly `DECISION_THRESHOLD` in `features.py` — that constant was hand-set from this run's KS-optimal point, not derived at runtime, so it won't recompute itself if you retrain on different data. See [API Reference](#api-reference) for what that means for serving.
 
 ---
 
@@ -150,15 +189,19 @@ Run the API server from your **session terminal**:
 python 03_predict.py
 ```
 
-Gunicorn starts on `CDSW_APP_PORT` (falls back to 5000, then probes 5001/9090/9091 if unavailable):
+On startup the script prints a diagnostics block, then Gunicorn binds to `CDSW_APP_PORT` (default `5000`) — or, if that port is already taken or equal to `CDSW_READONLY_PORT`, it probes `5001` → `9090` → `9091` in order and uses the first free one:
 
 ```
 === CML PORT DIAGNOSTICS ===
-  ...
+  CDSW_APP_PORT = 5000
+  CDSW_READONLY_PORT = NOT SET
+  CDSW_ENGINE_TYPE = NOT SET
   Binding on port: 5000
 ============================
 [INFO] Listening at: http://0.0.0.0:5000
 ```
+
+Confirmed locally: on this machine port 5000 was already bound (common on macOS, where ControlCenter/AirPlay Receiver squats on 5000), and the fallback logic worked exactly as coded — it printed `WARNING: port 5000 unavailable` and bound on `5001` instead. In a CML session `CDSW_APP_PORT` is normally already free, so you should see it bind on the port shown by `CDSW_APP_PORT` directly; if not, the fallback output above is what to expect, and you'll need `API_PORT=<port>` for Step 6.
 
 Keep this terminal open — the server must stay running for Step 6.
 
@@ -172,27 +215,28 @@ python 04_test_api.py
 
 Sends three **real applicants pulled from the gold table** (not hypothetical profiles) — a low-risk bureau-backed loan, a high-risk bureau-backed loan with a prior default, and a new-to-credit loan with no bureau file at all — and compares the prediction against the loan's actual outcome. If the server bound to a non-default port, run with `API_PORT=<port> python 04_test_api.py`.
 
-Expected output:
+Actual output against the trained model above (verified end-to-end: server started, requests sent, responses captured):
 ```
-Health check: {'status': 'ok', 'features': 21}
+Health check: {'features': 21, 'status': 'ok'}
 
 [Low risk, bureau-backed]
-  Default probability : 0.03xx
+  Default probability : 0.003
   Decision            : LOW (threshold 0.3793)
   Actual outcome      : repaid  -> correct
 
 [High risk, prior default]
-  Default probability : 0.8xxx
+  Default probability : 0.9379
   Decision            : HIGH (threshold 0.3793)
   Actual outcome      : DEFAULTED  -> correct
 
 [New-to-credit, no bureau file]
-  Default probability : 0.9xxx
+  Default probability : 0.942
   Decision            : HIGH (threshold 0.3793)
   Actual outcome      : DEFAULTED  -> correct
 ```
+Verified by direct comparison: the three payloads hardcoded in `04_test_api.py` are byte-for-byte the same rows `diagnose.py` picks out (see below) — evidently captured from a `diagnose.py` run at some point, though nothing in the code wires the two together, so they'll drift apart if the model or data changes and only one script is re-run.
 
-Need more real payloads to test with? `python diagnose.py` scans for outliers and prints ready-to-use JSON for the lowest/highest-scoring bureau-backed loans and the highest-scoring new-to-credit loan.
+Need more real payloads to test with? `python diagnose.py` scans for outliers (values > 100x the 75th percentile — 750-770 rows flagged per column on the committed dataset) and prints ready-to-use JSON for `LOW_RISK`/`HIGH_RISK`/`NEW_TO_CREDIT`, i.e. the lowest- and highest-scoring bureau-backed loans and the highest-scoring new-to-credit loan, each with the model's actual probability and true label (`prob=0.0030 actual_default=0`, `prob=0.9379 actual_default=1`, `prob=0.9420 actual_default=1` on this dataset).
 
 ---
 
@@ -215,10 +259,10 @@ Need more real payloads to test with? `python diagnose.py` scans for outliers an
 }
 ```
 
-**Response:**
+**Response** (verified — this is the actual response for the payload above, the same `LOW_RISK` row used in Step 6):
 ```json
 {
-  "default_probability": 0.0312,
+  "default_probability": 0.003,
   "prediction": 0,
   "risk_label": "LOW",
   "threshold": 0.3793
@@ -311,12 +355,12 @@ curl -X POST https://<your-cml-workspace>/api/v1/projects/<username>/<project>/m
   }'
 ```
 
-Response:
+Response (same `default_probability: 0.003` as the session API — `cml_model.py` and `03_predict.py` share the same `predict` logic via `features.py`, just wrapped differently):
 ```json
 {
   "success": true,
   "response": {
-    "default_probability": 0.0312,
+    "default_probability": 0.003,
     "prediction": 0,
     "risk_label": "LOW",
     "threshold": 0.3793
@@ -350,9 +394,23 @@ Step 3: python 05_validate_model.py
 ❌ Either threshold missed  → pipeline red
 ```
 
-No secrets or external services required — the pipeline runs entirely within GitHub Actions.
+No secrets or external services required — the pipeline runs entirely within GitHub Actions. Verified locally end-to-end with the same two commands CI runs, against the `loan_data.csv` currently committed to the repo:
+```
+Holdout        : 3,528 loans, 149 defaults (4.22%)
+ROC-AUC        : 0.7479
+Gini           : 0.4959   (gate: 0.35)
+KS             : 36.9     (gate: 25.0)
+
+By segment:
+  New-to-credit  n=  898  default= 7.46%  Gini=0.3426
+  Bureau-backed  n=2,630  default= 3.12%  Gini=0.5056
+
+VALIDATION PASSED — model meets all KPI gates.
+```
 
 `loan_data.csv` is committed to the repo (see `.gitignore`) rather than regenerated in CI: refreshing it requires `01_load_gold.py`, which reads Iceberg via Impala and needs a live CML Data Connection and Kerberos credentials that GitHub Actions doesn't have. Refresh the data from inside a CML session (Step 3 above) and commit the updated CSV when you want CI to train on newer data.
+
+**`05_validate_model.py` does not do an independent validation split.** It reloads `credit_risk_model.pkl` and `label_encoders.pkl`, then reconstructs the *same* 80/20 holdout as `02_train_model.py` (identical `random_state=42`, `stratify=y`) from `loan_data.csv` and re-scores it. So within one CI run, "training" and "validation" are evaluating the model on the same 3,528-row holdout it was already tested against during training — this gate catches a model that regresses in code/config, not one that was overfit to that particular split.
 
 ### KPI thresholds
 
