@@ -25,9 +25,10 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Generate loan data
-        run: python 01_generate_data.py
-
+      # loan_data.csv is committed to the repo (see .gitignore) rather than
+      # regenerated here: it now comes from 01_load_gold.py, which reads the
+      # M4 gold table via Impala and needs a live CML Data Connection +
+      # Kerberos credentials that GitHub Actions doesn't have.
       - name: Train model
         run: python 02_train_model.py
 
